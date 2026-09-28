@@ -3,13 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
+    "dev": "next dev frontend",
+    "build": "next build frontend",
+    "start": "next start frontend",
     "lint": "eslint",
-    "seed": "tsx scripts/seed-hindsight.ts",
-    "typecheck": "tsc --noEmit",
-    "smoke": "node scripts/smoke.mjs"
+    "seed": "tsx backend/scripts/seed-hindsight.ts",
+    "typecheck": "tsc --noEmit -p frontend/tsconfig.json && tsc --noEmit -p backend/tsconfig.json",
+    "smoke": "node backend/scripts/smoke.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.23",

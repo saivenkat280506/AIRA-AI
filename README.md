@@ -50,12 +50,12 @@ Hindsight is the **only** memory system. Every learn/recall flows through it:
 
 ### 1. `recall()` — on every new incident
 `POST /api/suggest` runs `recall(bank, "<signature> <service> <error>")`
-(`lib/hindsight.ts → hindsightRecall`). Hindsight's multi-strategy retrieval returns
+(`backend/lib/hindsight.ts → hindsightRecall`). Hindsight's multi-strategy retrieval returns
 past facts with per-result similarity scores; they are normalized into past-incident
-records (`lib/memory.ts → mergeExperiences`, deduped by `recordId`).
+records (`backend/lib/memory.ts → mergeExperiences`, deduped by `recordId`).
 
 ### 2. Application-side ranking — **not the LLM**
-The LLM never ranks anything. `lib/scoring.ts` computes, per recalled incident:
+The LLM never ranks anything. `backend/lib/scoring.ts` computes, per recalled incident:
 
 ```
 score = 0.55 · semantic        ← similarity returned by Hindsight recall
@@ -74,10 +74,10 @@ score = 0.55 · semantic        ← similarity returned by Hindsight recall
 * **recency** — 45-day half-life boost; older candidates rank lower but are never excluded.
 
 Candidates are sorted by `score` and handed to Groq **already ranked**. The UI shows the
-full component breakdown per candidate (`components/PastIncidents.tsx`).
+full component breakdown per candidate (`frontend/components/PastIncidents.tsx`).
 
 ### 3. Groq — phrasing only
-`lib/groq.ts` sends the incident + the ranked candidate table to Groq with instructions to
+`backend/lib/groq.ts` sends the incident + the ranked candidate table to Groq with instructions to
 ground the steps in the highest-ranked **successful** candidate, cite candidates by number
 and date, and call out failed approaches. It returns strict JSON
 (`steps`, `reasoning`, `confidence`). It is never asked to invent or re-rank anything.
@@ -88,7 +88,7 @@ stale evidence never justifies near-certainty, while a same-day prior resolution
 same incident legitimately can.
 
 ### 4. `retain()` — on every feedback event
-`POST /api/feedback` retains the full experience (`lib/records.ts → buildExperienceRecord`):
+`POST /api/feedback` retains the full experience (`backend/lib/records.ts → buildExperienceRecord`):
 
 * **“This fixed it”** → retained with `success=true`
 * **“This did not help”** → retained with `success=false` — kept on purpose so the fix's
@@ -170,10 +170,10 @@ Hindsight Cloud.
 * Every Groq and Hindsight call is wrapped in try/catch; failures render a calm, visible
   notice (`backends.note`) — the demo screen never hangs blank.
 * If Groq is missing/rate-limited → deterministic local generator
-  (`lib/demo-fallback.ts`) that still cites the ranked candidates (with an exact
+  (`backend/lib/demo-fallback.ts`) that still cites the ranked candidates (with an exact
   pre-written response for the rehearsed Redis scenario).
 * If Hindsight is missing/slow → local fallback memory backend with the same corpus and
-  contract (`lib/fallback-memory.ts`).
+  contract (`backend/lib/fallback-memory.ts`).
 * Force everything offline with `DEMO_FALLBACK=1`.
 * The header always shows the active backends (`Hindsight live` / `fallback memory`) so
   the judge always knows how an answer was produced.
@@ -184,36 +184,31 @@ Hindsight Cloud.
 
 ```
 /
-├── app/
-│   ├── page.tsx                    # Dashboard — report incident + stats + history
-│   ├── memory/page.tsx             # Memory view — what the agent remembers
-│   ├── incident/[id]/page.tsx      # Incident detail + agent suggestion + toggle
-│   └── api/
-│       ├── incident/route.ts       # POST create · GET list/detail
-│       ├── suggest/route.ts        # recall → rank → Groq (useMemory on/off)
-│       ├── feedback/route.ts       # retain(success|failure) + signature stats
-│       └── memory/route.ts         # memory overview via live recall()
-├── components/
-│   ├── ui/                         # shadcn/ui (button, card, select, toast, …)
-│   ├── IncidentForm.tsx            # report form (+ “Prefill demo”)
-│   ├── IncidentDetail.tsx          # detail orchestration: suggest + feedback
-│   ├── AgentSuggestion.tsx         # steps · confidence · reasoning · candidates
-│   ├── MemoryToggle.tsx            # “Without memory / With memory” switch
-│   ├── PastIncidents.tsx           # ranked candidates + score breakdown
-│   ├── FeedbackPanel.tsx           # “fixed it / did not help” + learned state
-│   ├── Dashboard.tsx · MemoryPage.tsx · SiteHeader.tsx · …
-├── lib/
-│   ├── hindsight.ts                # Hindsight client wrapper (retain/recall) + scoring re-export
-│   ├── memory.ts                   # backend selection, fact parsing, recall→rank pipeline
-│   ├── scoring.ts                  # weighted ranking formula (pure functions)
-│   ├── groq.ts                     # Groq call + prompts + JSON parsing
-│   ├── demo-fallback.ts            # canned suggestions (offline safety net)
-│   ├── records.ts                  # retain-content builders + structured text parser
-│   ├── fallback-memory.ts          # local fallback memory backend
-│   ├── incident-store.ts           # local transactional incident log (app state, not memory)
-│   ├── seed-data.ts                # 15-incident demo corpus
-│   ├── status.ts · env.ts · types.ts
-├── scripts/seed-hindsight.ts       # one-command demo seeding
+├── frontend/
+│   ├── app/                        # Next.js App Router and API route entrypoints
+│   │   ├── page.tsx                # Dashboard — report incident + stats + history
+│   │   ├── memory/page.tsx         # Memory view — what the agent remembers
+│   │   ├── incident/[id]/page.tsx  # Incident detail + agent suggestion + toggle
+│   │   └── api/                    # Thin Next.js HTTP route boundary
+│   ├── components/                 # UI components and shadcn/ui primitives
+│   ├── lib/utils.ts                # Client-safe class-name utility
+│   ├── public/                     # Static assets
+│   ├── next.config.ts              # Next.js app configuration
+│   └── tsconfig.json               # Frontend aliases, including @backend/*
+├── backend/
+│   ├── lib/                        # Memory, scoring, LLM, persistence, and types
+│   │   ├── hindsight.ts            # Hindsight client wrapper (retain/recall)
+│   │   ├── memory.ts               # backend selection, parsing, recall→rank pipeline
+│   │   ├── scoring.ts              # weighted ranking formula (pure functions)
+│   │   ├── groq.ts                 # Groq call + prompts + JSON parsing
+│   │   ├── demo-fallback.ts         # canned suggestions (offline safety net)
+│   │   ├── records.ts               # retain-content builders + structured text parser
+│   │   ├── fallback-memory.ts       # local fallback memory backend
+│   │   ├── incident-store.ts        # local transactional incident log
+│   │   ├── seed-data.ts              # 15-incident demo corpus
+│   │   └── status.ts · env.ts · types.ts
+│   ├── scripts/seed-hindsight.ts   # one-command demo seeding
+│   └── tsconfig.json               # Backend type-checking configuration
 ├── .env.example
 └── README.md
 ```
