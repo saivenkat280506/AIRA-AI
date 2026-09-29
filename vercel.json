@@ -1,0 +1,4 @@
+{
+  "framework": "nextjs",
+  "buildCommand": "npm run build && rm -rf .next && cp -R frontend/.next .next"
+}
