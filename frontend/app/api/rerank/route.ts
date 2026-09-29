@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getIncident } from "@backend/incident-store";
+import { getIncident, parseIncident } from "@backend/incident-store";
+import { readIncidentCookie } from "@backend/incident-session";
 import { buildCandidates, getMemoryBackend } from "@backend/memory";
 import { buildBackendStatus } from "@backend/status";
 import type { RerankResponse } from "@backend/types";
@@ -21,7 +22,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "incidentId is required." }, { status: 400 });
     }
 
-    const incident = await getIncident(incidentId);
+    const incident =
+      (await getIncident(incidentId)) ??
+      parseIncident(body.incident, incidentId) ??
+      readIncidentCookie(req, incidentId);
     if (!incident) {
       return NextResponse.json({ error: "Incident not found." }, { status: 404 });
     }

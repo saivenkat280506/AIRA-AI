@@ -31,6 +31,10 @@ interface FallbackStore {
   records: StoredRecord[];
 }
 
+const runtime = globalThis as typeof globalThis & {
+  __airaFallbackMemory?: FallbackStore;
+};
+
 const STOPWORDS = new Set([
   "a", "an", "the", "to", "of", "in", "on", "for", "and", "or", "is", "are",
   "at", "by", "with", "from", "after", "during", "when", "that", "this",
@@ -58,19 +62,26 @@ async function loadStore(): Promise<FallbackStore> {
   try {
     const raw = await fs.readFile(STORE_PATH, "utf8");
     const parsed = JSON.parse(raw) as FallbackStore;
-    if (Array.isArray(parsed.records)) return parsed;
+    if (Array.isArray(parsed.records)) {
+      runtime.__airaFallbackMemory = parsed;
+      return parsed;
+    }
   } catch {
     /* first run or corrupt file — fall through to seed */
   }
+  if (runtime.__airaFallbackMemory) return runtime.__airaFallbackMemory;
   return seedStore();
 }
 
 async function seedStore(): Promise<FallbackStore> {
   const store: FallbackStore = { seeded: true, records: buildSeedRecords() };
-  await enqueue(async () => {
+  runtime.__airaFallbackMemory = store;
+  try {
     await fs.mkdir(DATA_DIR, { recursive: true });
     await fs.writeFile(STORE_PATH, JSON.stringify(store, null, 2), "utf8");
-  });
+  } catch {
+    // Vercel's project directory is read-only; keep the seeded runtime copy.
+  }
   return store;
 }
 
@@ -83,8 +94,13 @@ export async function fallbackRetain(records: RetainRecord[]): Promise<void> {
       if (existing >= 0) store.records[existing] = r;
       else store.records.push(r);
     }
-    await fs.mkdir(DATA_DIR, { recursive: true });
-    await fs.writeFile(STORE_PATH, JSON.stringify(store, null, 2), "utf8");
+    runtime.__airaFallbackMemory = store;
+    try {
+      await fs.mkdir(DATA_DIR, { recursive: true });
+      await fs.writeFile(STORE_PATH, JSON.stringify(store, null, 2), "utf8");
+    } catch {
+      // Vercel's project directory is read-only; keep the runtime copy.
+    }
   });
 }
 
@@ -145,6 +161,7 @@ export async function fallbackIsSeeded(): Promise<boolean> {
 /** Reset the local store (used by the seed script with --force). */
 export async function fallbackReset(): Promise<void> {
   await enqueue(async () => {
+    runtime.__airaFallbackMemory = undefined;
     try {
       await fs.unlink(STORE_PATH);
     } catch {

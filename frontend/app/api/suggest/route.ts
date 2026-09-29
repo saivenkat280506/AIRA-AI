@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getIncident, updateIncident } from "@backend/incident-store";
+import {
+  getIncident,
+  parseIncident,
+  updateIncident,
+  upsertIncident,
+} from "@backend/incident-store";
+import { readIncidentCookie, setIncidentCookie } from "@backend/incident-session";
 import {
   buildCandidates,
   getMemoryBackend,
@@ -28,7 +34,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "incidentId is required." }, { status: 400 });
     }
 
-    const incident = await getIncident(incidentId);
+    const incident =
+      (await getIncident(incidentId)) ??
+      parseIncident(body.incident, incidentId) ??
+      readIncidentCookie(req, incidentId);
     if (!incident) {
       return NextResponse.json({ error: "Incident not found." }, { status: 404 });
     }
@@ -58,7 +67,8 @@ export async function POST(req: NextRequest) {
     //    Keys are omitted (not set to undefined) so the parallel without-memory
     //    run cannot clobber them.
     const chosen = useMemory && !memoryError ? candidates[0] : undefined;
-    const stored = await updateIncident(incident.id, {
+    const nextIncident: typeof incident = {
+      ...incident,
       agentSuggestion: generated.suggestion.steps.slice(0, 4).join(" | "),
       memoryMode: useMemory ? "with" : "without",
       ...(chosen ? { matchScore: chosen.score } : {}),
@@ -66,10 +76,12 @@ export async function POST(req: NextRequest) {
       ...(chosen?.experience.resolutionApproach
         ? { chosenApproach: chosen.experience.resolutionApproach }
         : {}),
-    });
+    };
+    const stored = await updateIncident(incident.id, nextIncident);
+    const responseIncident = stored ?? (await upsertIncident(nextIncident));
 
     const response: SuggestResponse = {
-      incident: stored ?? incident,
+      incident: responseIncident,
       usedMemory: useMemory && !memoryError,
       candidates,
       suggestion: generated.suggestion,
@@ -87,7 +99,8 @@ export async function POST(req: NextRequest) {
       generatedAt: new Date().toISOString(),
     };
 
-    return NextResponse.json(response);
+    const nextResponse = NextResponse.json(response);
+    return setIncidentCookie(nextResponse, responseIncident);
   } catch (err) {
     console.error("[api/suggest] failed:", err);
     return NextResponse.json(

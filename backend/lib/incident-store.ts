@@ -20,6 +20,36 @@ interface Store {
   incidents: Incident[];
 }
 
+/**
+ * Vercel functions do not provide a writable project directory. Keep a small
+ * process-local copy when the JSON store cannot be written; the API also
+ * mirrors the active incident in an HttpOnly cookie for the next function
+ * invocation in the same browser session.
+ */
+const runtime = globalThis as typeof globalThis & {
+  __airaIncidentStore?: Map<string, Incident>;
+};
+
+function runtimeIncidents(): Map<string, Incident> {
+  runtime.__airaIncidentStore ??= new Map<string, Incident>();
+  return runtime.__airaIncidentStore;
+}
+
+function mergeRuntime(store: Store): Store {
+  const merged = new Map(store.incidents.map((incident) => [incident.id, incident]));
+  for (const incident of runtimeIncidents().values()) merged.set(incident.id, incident);
+  const incidents = [...merged.values()].sort(
+    (a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp),
+  );
+  return { incidents };
+}
+
+function remember(store: Store): void {
+  const target = runtimeIncidents();
+  target.clear();
+  for (const incident of store.incidents) target.set(incident.id, incident);
+}
+
 let writeQueue: Promise<unknown> = Promise.resolve();
 function enqueue<T>(fn: () => Promise<T>): Promise<T> {
   const next = writeQueue.then(fn, fn);
@@ -31,16 +61,21 @@ async function load(): Promise<Store> {
   try {
     const raw = await fs.readFile(STORE_PATH, "utf8");
     const parsed = JSON.parse(raw) as Store;
-    if (Array.isArray(parsed.incidents)) return parsed;
+    if (Array.isArray(parsed.incidents)) return mergeRuntime(parsed);
   } catch {
     /* first run */
   }
-  return { incidents: [] };
+  return mergeRuntime({ incidents: [] });
 }
 
 async function save(store: Store): Promise<void> {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  await fs.writeFile(STORE_PATH, JSON.stringify(store, null, 2), "utf8");
+  remember(store);
+  try {
+    await fs.mkdir(DATA_DIR, { recursive: true });
+    await fs.writeFile(STORE_PATH, JSON.stringify(store, null, 2), "utf8");
+  } catch {
+    // Serverless deployments keep the in-memory copy for this runtime.
+  }
 }
 
 export interface CreateIncidentInput {
@@ -62,15 +97,39 @@ export async function createIncident(
     errorSignature: computeErrorSignature(input.service, input.error),
   };
 
-  await enqueue(async () => {
+  return upsertIncident(incident);
+}
+
+/** Upsert an incident when a later serverless function only has session data. */
+export async function upsertIncident(incident: Incident): Promise<Incident> {
+  return enqueue(async () => {
     const store = await load();
-    store.incidents.unshift(incident);
+    const idx = store.incidents.findIndex((item) => item.id === incident.id);
+    if (idx >= 0) store.incidents[idx] = incident;
+    else store.incidents.unshift(incident);
     // Keep the log bounded — memory lives in Hindsight, not here.
     if (store.incidents.length > 200) store.incidents.length = 200;
     await save(store);
+    return incident;
   });
+}
 
-  return incident;
+/** Narrow untrusted request data to the incident shape used by the APIs. */
+export function parseIncident(value: unknown, expectedId?: string): Incident | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Record<string, unknown>;
+  const severity = candidate.severity;
+  if (
+    typeof candidate.id !== "string" ||
+    (expectedId && candidate.id !== expectedId) ||
+    typeof candidate.timestamp !== "string" ||
+    typeof candidate.service !== "string" ||
+    typeof candidate.error !== "string" ||
+    !["critical", "high", "medium", "low"].includes(String(severity))
+  ) {
+    return null;
+  }
+  return candidate as unknown as Incident;
 }
 
 export async function getIncident(id: string): Promise<Incident | null> {

@@ -4,7 +4,9 @@ import {
   getIncident,
   getIncidentStats,
   listIncidents,
+  upsertIncident,
 } from "@backend/incident-store";
+import { readIncidentCookie, setIncidentCookie } from "@backend/incident-session";
 import type { Severity } from "@backend/types";
 
 /**
@@ -54,7 +56,8 @@ export async function POST(req: NextRequest) {
       timestamp: rawTimestamp || undefined,
     });
 
-    return NextResponse.json({ incident }, { status: 201 });
+    const response = NextResponse.json({ incident }, { status: 201 });
+    return setIncidentCookie(response, incident);
   } catch (err) {
     console.error("[api/incident] create failed:", err);
     return NextResponse.json(
@@ -68,11 +71,15 @@ export async function GET(req: NextRequest) {
   try {
     const id = req.nextUrl.searchParams.get("id");
     if (id) {
-      const incident = await getIncident(id);
+      const incident = (await getIncident(id)) ?? readIncidentCookie(req, id);
       if (!incident) {
         return NextResponse.json({ error: "Incident not found." }, { status: 404 });
       }
-      return NextResponse.json({ incident });
+      // Rehydrate the volatile store when this request lands on a fresh
+      // serverless function instance.
+      await upsertIncident(incident);
+      const response = NextResponse.json({ incident });
+      return setIncidentCookie(response, incident);
     }
 
     const limitParam = Number(req.nextUrl.searchParams.get("limit") ?? "25");

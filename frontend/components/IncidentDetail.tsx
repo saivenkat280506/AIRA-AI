@@ -86,7 +86,7 @@ export function IncidentDetail({ id }: { id: string }) {
         const res = await fetch("/api/suggest", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ incidentId: id, useMemory: memory }),
+          body: JSON.stringify({ incidentId: id, useMemory: memory, incident }),
         });
         const data = (await res.json()) as SuggestResponse & { error?: string };
         if (!res.ok) throw new Error(data.error ?? "Suggestion failed");
@@ -112,7 +112,7 @@ export function IncidentDetail({ id }: { id: string }) {
         else setLoadingWithout(false);
       }
     },
-    [id],
+    [id, incident],
   );
 
   // Both answers start automatically, in parallel, once the incident loads.
@@ -135,6 +135,7 @@ export function IncidentDetail({ id }: { id: string }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           incidentId: id,
+          incident,
           success,
           rootCause: fields.rootCause?.trim() || undefined,
           timeToResolve: fields.timeToResolve?.trim() || undefined,
@@ -174,7 +175,7 @@ export function IncidentDetail({ id }: { id: string }) {
           const rerankRes = await fetch("/api/rerank", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ incidentId: id }),
+            body: JSON.stringify({ incidentId: id, incident: data.incident }),
           });
           const rerank = (await rerankRes.json()) as RerankResponse & { error?: string };
           if (!rerankRes.ok) throw new Error(rerank.error ?? "Re-ranking failed");

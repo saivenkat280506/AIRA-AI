@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getIncident, updateIncident } from "@backend/incident-store";
+import {
+  getIncident,
+  parseIncident,
+  updateIncident,
+  upsertIncident,
+} from "@backend/incident-store";
+import { readIncidentCookie, setIncidentCookie } from "@backend/incident-session";
 import {
   getMemoryBackend,
   getSignatureStats,
@@ -46,22 +52,25 @@ export async function POST(req: NextRequest) {
           .slice(0, 12)
       : undefined;
 
-    const existing = await getIncident(incidentId);
+    const existing =
+      (await getIncident(incidentId)) ??
+      parseIncident(body.incident, incidentId) ??
+      readIncidentCookie(req, incidentId);
     if (!existing) {
       return NextResponse.json({ error: "Incident not found." }, { status: 404 });
     }
 
     // 1) Update the local transactional record.
-    const incident = await updateIncident(incidentId, {
+    const update = {
       success,
       feedbackSubmitted: true,
       ...(rootCause ? { rootCause } : {}),
       ...(timeToResolve ? { timeToResolve } : {}),
       ...(resolutionSteps && resolutionSteps.length > 0 ? { resolutionSteps } : {}),
-    });
-    if (!incident) {
-      return NextResponse.json({ error: "Incident not found." }, { status: 404 });
-    }
+    };
+    const incident =
+      (await updateIncident(incidentId, update)) ??
+      (await upsertIncident({ ...existing, ...update }));
 
     // 2) Retain the experience into the memory backend (Hindsight in prod).
     const backend = getMemoryBackend();
@@ -95,7 +104,9 @@ export async function POST(req: NextRequest) {
       const stamped = await updateIncident(incidentId, {
         feedbackAt: new Date().toISOString(),
       });
-      if (stamped) finalIncident = stamped;
+      finalIncident =
+        stamped ??
+        (await upsertIncident({ ...finalIncident, feedbackAt: new Date().toISOString() }));
     }
 
     // 3) Recompute this signature's stats so the UI can show the learning effect.
@@ -116,7 +127,8 @@ export async function POST(req: NextRequest) {
       }),
     };
 
-    return NextResponse.json(response);
+    const nextResponse = NextResponse.json(response);
+    return setIncidentCookie(nextResponse, finalIncident);
   } catch (err) {
     console.error("[api/feedback] failed:", err);
     return NextResponse.json(
