@@ -6,9 +6,11 @@
     "dev": "next dev frontend",
     "build": "next build frontend",
     "start": "next start frontend",
+    "start:3100": "next start frontend -p 3100",
     "lint": "eslint",
     "seed": "tsx backend/scripts/seed-hindsight.ts",
     "typecheck": "tsc --noEmit -p frontend/tsconfig.json && tsc --noEmit -p backend/tsconfig.json",
+    "verify": "npm run typecheck && npm run lint && npm run build",
     "smoke": "node backend/scripts/smoke.mjs"
   },
   "dependencies": {

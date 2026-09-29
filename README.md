@@ -17,16 +17,26 @@ Tailwind CSS · shadcn/ui · Lucide · Groq (llama-3.3-70b / gpt-oss) · Hindsig
 
 ```bash
 npm install
-cp .env.example .env.local      # add GROQ_API_KEY + HINDSIGHT_API_KEY (see below)
-npm run seed                    # load the 15-incident demo corpus into memory
-npm run dev                     # http://localhost:3000
+cp .env.example frontend/.env.local    # ONE canonical file — keys for app + seed script
+npm run seed                           # load the 15-incident demo corpus into memory
+npm run dev                            # http://localhost:3000
 ```
+
+> **Env file location — canonical is `frontend/.env.local`:** Next.js resolves
+> `.env.local` from its own project directory (`frontend/`), and `npm run seed` reads the
+> same file, so a single copy serves both. Keeping keys only at the repo root is the
+> classic trap here: the seed script would see them but the app would not, and it would
+> silently boot into fallback mode (header shows `fallback memory`, not `Hindsight live`).
+> A repo-root `.env.local` is still honored by the seed script as a legacy fallback, with
+> a warning to move it.
+
+Deployment: not hosted, run locally.
 
 The app runs **without any Hindsight key** on a bundled local fallback memory backend
 (same corpus, same retain/recall contract) so the demo never hangs on a blank screen.
 With `HINDSIGHT_API_KEY` set, all memory flows through Hindsight Cloud automatically.
 
-### Environment variables (`.env.local`)
+### Environment variables (`frontend/.env.local`)
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
@@ -46,13 +56,16 @@ a calm status notice instead of hanging.
 
 ## How Hindsight memory is used
 
-Hindsight is the **only** memory system. Every learn/recall flows through it:
+Hindsight is the app's **only** memory system when a key is configured — every
+learn/recall goes through it (with no key, `backend/lib/fallback-memory.ts` implements the
+same retain/recall contract locally):
 
 ### 1. `recall()` — on every new incident
 `POST /api/suggest` runs `recall(bank, "<signature> <service> <error>")`
-(`backend/lib/hindsight.ts → hindsightRecall`). Hindsight's multi-strategy retrieval returns
-past facts with per-result similarity scores; they are normalized into past-incident
-records (`backend/lib/memory.ts → mergeExperiences`, deduped by `recordId`).
+(`backend/lib/hindsight.ts → hindsightRecall`). Hindsight's recall returns past facts with
+per-result similarity scores (`scores.semantic`, falling back to `scores.reranker` /
+`scores.final`); they are normalized into past-incident records
+(`backend/lib/memory.ts → mergeExperiences`, deduped by `recordId`).
 
 ### 2. Application-side ranking — **not the LLM**
 The LLM never ranks anything. `backend/lib/scoring.ts` computes, per recalled incident:
@@ -67,10 +80,15 @@ score = 0.55 · semantic        ← similarity returned by Hindsight recall
 * **success** — outcome-aware per candidate, **not** shared across the signature:
   `0.35 · ownOutcome + 0.65 · Laplace(successes, attempts)` over records sharing the
   candidate's **resolution approach** (`resolutionApproach` label — how the record fixed
-  the problem). A record whose own outcome was a failure is capped at 0.65·aggregate, so
-  failed fixes always score clearly below successful ones and never take the `chosen`
-  slot. Thin groups are topped up with targeted probe recalls; Laplace smoothing keeps
-  0/1 samples honest.
+  the problem). A failure (own outcome `false`) is capped at `0.65 · aggregate`, while a
+  success gets `0.35 + 0.65 · aggregate` — so on this component a failed fix always loses
+  to a successful record with the same aggregate, and in the demo corpus every failure
+  ranks below every success. Thin groups are topped up with targeted probe recalls;
+  Laplace smoothing keeps 0/1 samples honest.
+  (The `chosen` slot is *not* a success-filtered pick — it is simply the top-ranked
+  candidate, `candidates[0]` in `frontend/app/api/suggest/route.ts`. The Groq prompt is
+  what directs the model to ground its steps in the highest-ranked **successful**
+  candidate.)
 * **recency** — 45-day half-life boost; older candidates rank lower but are never excluded.
 
 Candidates are sorted by `score` and handed to Groq **already ranked**. The UI shows the
@@ -116,6 +134,8 @@ the agent stops recommending it and says so explicitly.
 
 ## Demo instructions (judging)
 
+<!-- TODO: add demo video link here once recorded — do not invent a URL -->
+
 ### Seed data — required before the live demo
 
 ```bash
@@ -123,7 +143,7 @@ npm run seed                      # auto-detects backend (Hindsight if keyed, el
 npm run seed -- --backend=hindsight
 npm run seed -- --backend=fallback
 npm run seed -- --force           # reset local store / re-retain into Hindsight
-npm run seed -- --reset           # wipe the Hindsight bank and reseed 15 fresh
+npm run seed -- --reset           # wipe the Hindsight bank + local incident store, reseed 15 fresh
 ```
 
 Seeds **15 synthetic past incidents** across varied services and error types
@@ -158,9 +178,12 @@ Hindsight Cloud.
 5. Submit **“This fixed it”** (optionally adding root cause + time-to-resolve) → the
    experience is `retain()`ed, the signature's stats update live
    (`checkout-api:… → n/n successful`), the **Memory** page shows the bank growing, and
-   the **ranking-shift reveal** shows the rated fix's success value moving by ≥0.05, the
-   just-retained record entering the ranking (`New entry ranks #1`), and a plain-language
-   statement of whether the order changed.
+   the **ranking-shift reveal** shows the rated fix's success value before → after
+   (**0.78 → 0.84** on a freshly seeded bank), the just-retained record entering the
+   ranking (`New entry ranks #1`), and a plain-language statement of whether the order
+   changed. Re-ratings on the same approach shrink that step (Laplace converges — a
+   second click on a 2/2 group moves only ~0.03), so run `npm run seed -- --reset`
+   before the demo; `npm run smoke` asserts the ≥0.05 move on a fresh bank.
 6. Report the same incident again → the just-retained entry is ranked **#1**, confidence
    is **higher** than the first run, and the reasoning cites the previous success **by
    date**.
@@ -194,6 +217,7 @@ Hindsight Cloud.
 │   ├── lib/utils.ts                # Client-safe class-name utility
 │   ├── public/                     # Static assets
 │   ├── next.config.ts              # Next.js app configuration
+│   ├── .env.local                  # canonical env keys (gitignored; copy of .env.example)
 │   └── tsconfig.json               # Frontend aliases, including @backend/*
 ├── backend/
 │   ├── lib/                        # Memory, scoring, LLM, persistence, and types
@@ -207,8 +231,10 @@ Hindsight Cloud.
 │   │   ├── incident-store.ts        # local transactional incident log
 │   │   ├── seed-data.ts              # 15-incident demo corpus
 │   │   └── status.ts · env.ts · types.ts
-│   ├── scripts/seed-hindsight.ts   # one-command demo seeding
-│   └── tsconfig.json               # Backend type-checking configuration
+│   ├── scripts/
+│   │   ├── seed-hindsight.ts        # one-command demo seeding
+│   │   └── smoke.mjs                # browser end-to-end test + screenshots
+│   └── tsconfig.json                # Backend type-checking configuration
 ├── .env.example
 └── README.md
 ```
@@ -216,15 +242,33 @@ Hindsight Cloud.
 > **Note:** `.data/incidents.json` is the app's transactional log of *this session's*
 > reported incidents (what was shown, what the user rated). It is not the agent's memory —
 > all learning and recall goes through Hindsight `retain()` / `recall()`.
+> `.data/fallback-memory.json` is the local fallback memory store, used only when no
+> Hindsight key reaches the app (it auto-seeds with the same 15 records).
 
 ## Commands
 
 ```bash
-npm run dev        # start dev server
-npm run build      # production build
-npm run start      # serve production build
-npm run lint       # eslint
-npm run typecheck  # tsc --noEmit
-npm run seed       # seed demo memory (see flags above)
-npm run smoke      # browser end-to-end test (needs `npm run start -p 3100` running)
+npm run dev         # start dev server (http://localhost:3000)
+npm run build       # production build
+npm run start       # serve production build (port 3000)
+npm run start:3100  # serve production build on port 3100 (smoke's default base)
+npm run lint        # eslint
+npm run typecheck   # tsc --noEmit, once per tsconfig (frontend + backend)
+npm run verify      # typecheck + lint + build — the pre-demo gate
+npm run seed        # seed demo memory (see flags above)
+
+# Browser end-to-end test (Playwright + Chrome, writes screenshots to /tmp/aira-shots).
+# Default base URL is http://localhost:3100 — build and start first:
+npm run build && npm run start:3100
+npm run smoke
+# …or point it at a running dev server:
+SMOKE_BASE=http://localhost:3000 npm run smoke
 ```
+
+> **Note:** if you prefer plain `npm run start`, the port flag needs the npm separator —
+> `npm run start -- -p 3100`. Without `--` npm swallows `-p`, the server binds port 3000
+> instead, and the smoke test cannot reach it. `npm run start:3100` avoids that footgun.
+
+> **Note:** stop `npm run dev` before `npm run build` (or `npm run verify`, which builds).
+> Both use the same `.next` directory, and building under a live dev server corrupts its
+> cache — pages start returning 500 until the dev server is restarted.

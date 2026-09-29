@@ -17,11 +17,25 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
-/** Minimal .env/.env.local loader (tsx does not load Next.js env files). */
-async function loadEnvFiles(): Promise<void> {
-  for (const file of [".env.local", ".env"]) {
+/**
+ * Load env for the seed script (tsx does not load Next.js env files).
+ *
+ * Canonical location is `frontend/.env.local` — the same file Next.js reads,
+ * so the app and this script always see identical keys. Repo-root `.env*`
+ * files are still honored as a legacy fallback (with a warning), because a
+ * root-only file leaves the running app in fallback mode.
+ *
+ * First file to define a key wins; already-exported shell vars win over both.
+ */
+async function loadEnvFiles(): Promise<string[]> {
+  const canonical = ["frontend/.env.local", "frontend/.env"];
+  const legacy = [".env.local", ".env"];
+  const legacyUsed: string[] = [];
+
+  for (const [index, file] of [...canonical, ...legacy].entries()) {
     try {
       const raw = await fs.readFile(path.join(process.cwd(), file), "utf8");
+      if (index >= canonical.length) legacyUsed.push(file);
       for (const line of raw.split("\n")) {
         const trimmed = line.trim();
         if (!trimmed || trimmed.startsWith("#")) continue;
@@ -41,10 +55,11 @@ async function loadEnvFiles(): Promise<void> {
       /* file absent — fine */
     }
   }
+  return legacyUsed;
 }
 
 async function main(): Promise<void> {
-  await loadEnvFiles();
+  const legacyEnvFiles = await loadEnvFiles();
 
   const args = process.argv.slice(2);
   const force = args.includes("--force");
@@ -60,7 +75,14 @@ async function main(): Promise<void> {
 
   const backend = getMemoryBackend();
   console.log(`\nAIRA seed script`);
-  console.log(`  backend: ${backend.name} — ${backend.detail}\n`);
+  console.log(`  backend: ${backend.name} — ${backend.detail}`);
+  if (legacyEnvFiles.length) {
+    console.log(
+      `  ⚠ env read from legacy ${legacyEnvFiles.join(" + ")} — move it to ` +
+        `frontend/.env.local (canonical; Next.js only reads there) so the app sees the same keys.`,
+    );
+  }
+  console.log("");
 
   // ── Hindsight: optional full wipe of the bank before seeding.
   //    Also clears the local incident store so the demo starts with
