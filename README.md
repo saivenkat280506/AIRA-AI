@@ -36,6 +36,24 @@ The app runs **without any Hindsight key** on a bundled local fallback memory ba
 (same corpus, same retain/recall contract) so the demo never hangs on a blank screen.
 With `HINDSIGHT_API_KEY` set, all memory flows through Hindsight Cloud automatically.
 
+## Screenshots
+
+| Dashboard | Side-by-side comparison |
+|-----------|-------------------------|
+| ![Dashboard](docs/screenshots/01-dashboard.png) | ![Side-by-side](docs/screenshots/02-side-by-side.png) |
+
+| Ranking shift | Memory just learned |
+|---------------|---------------------|
+| ![Ranking shift](docs/screenshots/03-ranking-shift.png) | ![Memory learned](docs/screenshots/04-memory-just-learned.png) |
+
+| Dashboard (learned) | Dashboard mobile |
+|---------------------|------------------|
+| ![Dashboard learned](docs/screenshots/05-dashboard-learned.png) | ![Dashboard mobile](docs/screenshots/06-dashboard-mobile.png) |
+
+| Incident mobile toggle |
+|------------------------|
+| ![Incident mobile toggle](docs/screenshots/07-incident-mobile-toggle.png) |
+
 ### Environment variables (`frontend/.env.local`)
 
 | Variable | Required | Purpose |
